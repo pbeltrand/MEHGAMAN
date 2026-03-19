@@ -113,7 +113,7 @@ class PlatformerScene extends Phaser.Scene {
     enemy.destroy();
 
     const bullet = this.make.graphics({ x: 0, y: 0, add: false });
-    bullet.fillStyle(0x9af6ff, 1);
+    bullet.fillStyle(0xffffff, 1);
     bullet.fillCircle(6, 6, 6);
     bullet.generateTexture("bullet", 12, 12);
     bullet.destroy();
