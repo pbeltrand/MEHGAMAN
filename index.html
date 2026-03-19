@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mini Mega Platformer</title>
+    <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+    <main class="layout">
+        <section class="panel">
+            <p class="eyebrow">VGM SOFT</p>
+            <h1>Meh-gaman</h1>
+            <p class="copy">
+                Muévete, salta, dispara y llega al portal.
+            </p>
+
+            <div class="controls">
+                <div><strong>Mover:</strong> Flechas o <kbd>A</kbd> <kbd>D</kbd></div>
+                <div><strong>Saltar:</strong> <kbd>W</kbd>, flecha arriba o <kbd>Espacio</kbd></div>
+                <div><strong>Disparar:</strong> <kbd>J</kbd></div>
+                <div><strong>Reiniciar:</strong> <kbd>R</kbd></div>
+            </div>
+        </section>
+
+        <section class="game-shell">
+            <div id="game"></div>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+    <script src="./game.js"></script>
+</body>
+
+</html>
