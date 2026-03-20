@@ -5,20 +5,35 @@ const JUMP_SPEED = 445;
 const BULLET_SPEED = 460;
 const PLAYER_MAX_HEALTH = 5;
 const BOSS_MAX_HEALTH = 18;
-const BOSS_MAX_BOUNCING_SPHERES_PHASE_1 = 4;
-const BOSS_MAX_BOUNCING_SPHERES_PHASE_2 = 7;
+const BOSS_PHASE_2_TRIGGER_RATIO = 0.35;
+const BOSS_TELEPORT_INTERVAL_PHASE_1 = 1600;
+const BOSS_TELEPORT_INTERVAL_PHASE_2 = 700;
+const BOSS_MAX_BOUNCING_SPHERES_PHASE_1 = 6;
+const BOSS_MAX_BOUNCING_SPHERES_PHASE_2 = 12;
 const BOSS_SPRITE_PATH = "assets/boss.png";
+const BOSS_PHASE_2_SPRITE_PATH = "assets/boss_lvl2.png";
 const BOSS_TEXTURE_KEY = "boss-phase";
+const BOSS_PHASE_2_TEXTURE_KEY = "boss-phase-2";
 const BOSS_FALLBACK_TEXTURE_KEY = "boss-phase-fallback";
 const BOSS_SCALE = 0.48;
+const MUSIC_TRACKS = {
+  level1: { key: "music-level1", path: "assets/music/level1.mp3" },
+  bossPhase1: { key: "music-boss-phase1", path: "assets/music/boss_phase1.mp3" },
+  bossPhase2: { key: "music-boss-phase2", path: "assets/music/boss_phase2.mp3" },
+  ending: { key: "music-ending", path: "assets/music/ending.mp3" },
+};
+const SFX_TRACKS = {
+  bossPhaseChange: { key: "sfx-boss-phase-change", path: "assets/sfx/boss_phase_change.mp3" },
+  bossDeath: { key: "sfx-boss-death", path: "assets/sfx/boss_death.mp3" },
+};
 
 const DEBUG_OPTIONS = {
-  enabled: true,
+  enabled: false,
   infiniteHealth: false,
   autoFire: true,
   autoFireInterval: 120,
   portalAlwaysActive: true,
-  startAtBossFight: true,
+  startAtBossFight: false,
 };
 
 const PLAYER_TEXTURE_KEYS = {
@@ -226,6 +241,12 @@ Tomas Nuncaacaba
 Pilar Todavia
 Rene Unpocomas
 
+Ending theme
+Peter Cetera
+
+Ending Inspiratio
+Quest for the Crown
+
 Participacion Especial
 Doctor Byte
 Señora Frame
@@ -246,6 +267,16 @@ A cada salto salvado en el ultimo pixel
 
 Y a ti, por llegar hasta el final.
 
+
+
+
+
+pico pal que lee.....
+
+
+
+
+
 FIN
 `;
 
@@ -253,16 +284,38 @@ class PlatformerScene extends Phaser.Scene {
   constructor() {
     super("platformer-scene");
     this.hasExternalBossSprite = false;
+    this.hasExternalBossPhase2Sprite = false;
+    this.loadedMusicKeys = new Set();
+    this.loadedSfxKeys = new Set();
+    this.currentMusicKey = null;
   }
 
   preload() {
     this.load.image(BOSS_TEXTURE_KEY, BOSS_SPRITE_PATH);
+    this.load.image(BOSS_PHASE_2_TEXTURE_KEY, BOSS_PHASE_2_SPRITE_PATH);
+    Object.values(MUSIC_TRACKS).forEach((track) => {
+      this.load.audio(track.key, track.path);
+      this.load.once(`filecomplete-audio-${track.key}`, () => {
+        this.loadedMusicKeys.add(track.key);
+      });
+    });
+    Object.values(SFX_TRACKS).forEach((track) => {
+      this.load.audio(track.key, track.path);
+      this.load.once(`filecomplete-audio-${track.key}`, () => {
+        this.loadedSfxKeys.add(track.key);
+      });
+    });
     this.load.once(`filecomplete-image-${BOSS_TEXTURE_KEY}`, () => {
       this.hasExternalBossSprite = true;
+    });
+    this.load.once(`filecomplete-image-${BOSS_PHASE_2_TEXTURE_KEY}`, () => {
+      this.hasExternalBossPhase2Sprite = true;
     });
     this.load.once("loaderror", (file) => {
       if (file?.key === BOSS_TEXTURE_KEY) {
         this.hasExternalBossSprite = false;
+      } else if (file?.key === BOSS_PHASE_2_TEXTURE_KEY) {
+        this.hasExternalBossPhase2Sprite = false;
       }
     });
   }
@@ -276,11 +329,10 @@ class PlatformerScene extends Phaser.Scene {
     this.createUI();
     this.createInput();
     this.createCollisions();
-    if (DEBUG_OPTIONS.enabled && DEBUG_OPTIONS.startAtBossFight) {
-      this.startBossLevel();
-    } else {
-      this.startLevelOne();
-    }
+    this.physics.world.timeScale = 1;
+    this.sound.stopAll();
+    this.currentMusicKey = null;
+    this.startTitleScreen();
   }
 
   resetRunState() {
@@ -289,7 +341,7 @@ class PlatformerScene extends Phaser.Scene {
     this.invulnerableUntil = 0;
     this.playerHealth = PLAYER_MAX_HEALTH;
     this.playerShootUntil = 0;
-    this.stage = "level1";
+    this.stage = "title";
     this.transitioning = false;
     this.bossHealth = BOSS_MAX_HEALTH;
     this.bossPhase = 1;
@@ -300,6 +352,8 @@ class PlatformerScene extends Phaser.Scene {
     this.endingStarted = false;
     this.debugAutoFireAt = 0;
     this.portalUnlocked = false;
+    this.bossInPhaseTransition = false;
+    this.playerDeathInProgress = false;
   }
 
   createTextures() {
@@ -466,6 +520,7 @@ class PlatformerScene extends Phaser.Scene {
     this.bgShapes = this.add.group();
     this.bgDots = this.add.group();
     this.bossArt = this.add.container(0, 0);
+    this.titleContainer = this.add.container(0, 0).setVisible(false);
     this.endingContainer = this.add.container(0, 0).setVisible(false);
 
     for (let i = 0; i < 14; i += 1) {
@@ -603,6 +658,11 @@ class PlatformerScene extends Phaser.Scene {
     this.playerBullets.clear(true, true);
     this.bossBullets.clear(true, true);
     this.bossArt.removeAll(true);
+    this.titleContainer.removeAll(true);
+    this.titleContainer.setVisible(false);
+    this.endingContainer.removeAll(true);
+    this.endingContainer.setVisible(false);
+    this.endingContainer.setY(0);
 
     if (this.goal) {
       this.goal.destroy();
@@ -628,6 +688,71 @@ class PlatformerScene extends Phaser.Scene {
     this.bossBarFrame.setVisible(false);
     this.bossBarFill.setVisible(false);
     this.bossBarLabel.setVisible(false);
+  }
+
+  startTitleScreen() {
+    this.clearStage();
+    this.resetRunState();
+    this.stage = "title";
+    this.physics.world.timeScale = 1;
+    this.sound.stopAll();
+    this.currentMusicKey = null;
+    this.bgSky.setFillStyle(0xeaf7ff, 1);
+    this.bgHorizon.setFillStyle(0xcfeaff, 1);
+    this.player.disableBody(true, true);
+    this.statusText.setText("");
+    this.stageText.setText("");
+    this.messageText.setText("");
+    this.debugPanel.setVisible(false);
+    this.debugText.setVisible(false);
+
+    const veil = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0xffffff, 0.14);
+    const title = this.add
+      .text(GAME_WIDTH / 2, 180, "Meh-Gaman", {
+        fontFamily: "Trebuchet MS, sans-serif",
+        fontSize: "82px",
+        color: "#0d4ea6",
+        stroke: "#ffffff",
+        strokeThickness: 10,
+      })
+      .setOrigin(0.5, 0.5);
+    const prompt = this.add
+      .text(GAME_WIDTH / 2, 265, "Presione alguna tecla para comenzar", {
+        fontFamily: "Trebuchet MS, sans-serif",
+        fontSize: "28px",
+        color: "#163250",
+        stroke: "#ffffff",
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5, 0.5);
+
+    this.tweens.add({
+      targets: prompt,
+      alpha: { from: 0.35, to: 1 },
+      yoyo: true,
+      repeat: -1,
+      duration: 760,
+      ease: "Sine.easeInOut",
+    });
+
+    this.titleContainer.add([veil, title, prompt]);
+    this.titleContainer.setVisible(true);
+
+    this.input.keyboard.once("keydown", () => {
+      if (this.stage !== "title") {
+        return;
+      }
+
+      this.titleContainer.setVisible(false);
+      this.debugPanel.setVisible(true);
+      this.debugText.setVisible(true);
+
+      if (DEBUG_OPTIONS.enabled && DEBUG_OPTIONS.startAtBossFight) {
+        this.startBossLevel();
+      } else {
+        this.startLevelOne();
+      }
+    });
   }
 
   startLevelOne() {
@@ -660,6 +785,7 @@ class PlatformerScene extends Phaser.Scene {
     this.player.setVelocity(0, 0);
     this.player.setFlipX(false);
     this.facing = 1;
+    this.playMusicTrack("level1");
     this.updateHud();
   }
 
@@ -708,6 +834,7 @@ class PlatformerScene extends Phaser.Scene {
     this.placeBossAt(Phaser.Math.Between(0, this.bossPositions.length - 1), true);
     this.launchBossSphere();
     this.bossTeleportAt = this.time.now + 1800;
+    this.playMusicTrack("bossPhase1");
     this.updateHud();
   }
 
@@ -723,15 +850,30 @@ class PlatformerScene extends Phaser.Scene {
   }
 
   createBossSprite() {
-    const bossTextureKey =
-      this.hasExternalBossSprite && this.textures.exists(BOSS_TEXTURE_KEY)
-        ? BOSS_TEXTURE_KEY
-        : BOSS_FALLBACK_TEXTURE_KEY;
+    const bossTextureKey = this.getBossTextureKey();
     this.bossSprite = this.physics.add.sprite(0, 0, bossTextureKey);
     this.bossSprite.body.setAllowGravity(false);
     this.bossSprite.setImmovable(true);
     this.bossSprite.setCollideWorldBounds(true);
     this.bossSprite.body.moves = false;
+    this.applyBossVisuals(bossTextureKey);
+    this.physics.add.overlap(this.playerBullets, this.bossSprite, this.hitBoss, null, this);
+    this.physics.add.overlap(this.player, this.bossSprite, this.hitPlayer, null, this);
+  }
+
+  getBossTextureKey() {
+    if (this.bossPhase >= 2 && this.hasExternalBossPhase2Sprite && this.textures.exists(BOSS_PHASE_2_TEXTURE_KEY)) {
+      return BOSS_PHASE_2_TEXTURE_KEY;
+    }
+
+    if (this.hasExternalBossSprite && this.textures.exists(BOSS_TEXTURE_KEY)) {
+      return BOSS_TEXTURE_KEY;
+    }
+
+    return BOSS_FALLBACK_TEXTURE_KEY;
+  }
+
+  applyBossVisuals(bossTextureKey) {
     if (bossTextureKey === BOSS_TEXTURE_KEY) {
       this.bossSprite.setScale(BOSS_SCALE);
       this.bossSprite.body.setSize(
@@ -745,14 +887,40 @@ class PlatformerScene extends Phaser.Scene {
         .setSize(Math.max(36, 74 * BOSS_SCALE), Math.max(96, 188 * BOSS_SCALE))
         .setOffset(13, 16);
     }
-    this.physics.add.overlap(this.playerBullets, this.bossSprite, this.hitBoss, null, this);
-    this.physics.add.overlap(this.player, this.bossSprite, this.hitPlayer, null, this);
+  }
+
+  playMusicTrack(trackName) {
+    const track = MUSIC_TRACKS[trackName];
+    if (!track || this.currentMusicKey === track.key || !this.loadedMusicKeys.has(track.key)) {
+      return;
+    }
+
+    this.sound.stopAll();
+    this.sound.play(track.key, {
+      loop: true,
+      volume: 0.45,
+    });
+    this.currentMusicKey = track.key;
+  }
+
+  playSfx(trackName, config = {}) {
+    const track = SFX_TRACKS[trackName];
+    if (!track || !this.loadedSfxKeys.has(track.key)) {
+      return;
+    }
+
+    this.sound.play(track.key, {
+      loop: false,
+      volume: 0.7,
+      ...config,
+    });
   }
 
   startEnding() {
     this.clearStage();
     this.stage = "ending";
     this.endingStarted = true;
+    this.playMusicTrack("ending");
     this.player.disableBody(true, true);
     this.bgSky.setFillStyle(0x050814, 1);
     this.bgHorizon.setFillStyle(0x101b3f, 1);
@@ -786,8 +954,9 @@ class PlatformerScene extends Phaser.Scene {
     this.tweens.add({
       targets: this.endingContainer,
       y: -credits.height - GAME_HEIGHT - 200,
-      duration: 48000,
+      duration: 260000,
       ease: "Linear",
+      onComplete: () => this.startTitleScreen(),
     });
   }
 
@@ -797,11 +966,26 @@ class PlatformerScene extends Phaser.Scene {
       return;
     }
 
+    if (this.stage === "title") {
+      return;
+    }
+
     if (this.stage === "ending") {
       return;
     }
 
+    if (this.playerDeathInProgress) {
+      return;
+    }
+
     if (!this.player.active) {
+      return;
+    }
+
+    if (this.bossInPhaseTransition) {
+      this.player.setVelocity(0, 0);
+      this.player.setTexture(PLAYER_TEXTURE_KEYS.idle);
+      this.updatePlayerFlash();
       return;
     }
 
@@ -888,7 +1072,7 @@ class PlatformerScene extends Phaser.Scene {
   }
 
   handleBoss() {
-    if (this.stage !== "boss" || this.bossDefeated) {
+    if (this.stage !== "boss" || this.bossDefeated || this.bossInPhaseTransition) {
       return;
     }
 
@@ -954,7 +1138,7 @@ class PlatformerScene extends Phaser.Scene {
     this.placeBossAt(nextIndex);
     this.launchBossSphere();
 
-    const phaseInterval = this.bossPhase === 1 ? 1600 : 1000;
+    const phaseInterval = this.bossPhase === 1 ? BOSS_TELEPORT_INTERVAL_PHASE_1 : BOSS_TELEPORT_INTERVAL_PHASE_2;
     this.bossTeleportAt = this.time.now + phaseInterval;
   }
 
@@ -1037,7 +1221,7 @@ class PlatformerScene extends Phaser.Scene {
 
     this.destroyBullet(bullet);
 
-    if (this.stage !== "boss" || this.bossDefeated) {
+    if (this.stage !== "boss" || this.bossDefeated || this.bossInPhaseTransition) {
       return;
     }
 
@@ -1050,10 +1234,8 @@ class PlatformerScene extends Phaser.Scene {
       }
     });
 
-    if (this.bossHealth === Math.ceil(BOSS_MAX_HEALTH / 2) && this.bossPhase === 1) {
-      this.bossPhase = 2;
-      this.messageText.setText("Fase 2\nEl jefe se mueve mas rapido.");
-      this.bossTeleportAt = this.time.now + 900;
+    if (this.bossHealth <= Math.ceil(BOSS_MAX_HEALTH * BOSS_PHASE_2_TRIGGER_RATIO) && this.bossPhase === 1) {
+      this.startBossPhaseTransition();
     } else {
       this.messageText.setText(`Impacto directo.\nEnergia del boss: ${this.bossHealth}`);
     }
@@ -1084,6 +1266,99 @@ class PlatformerScene extends Phaser.Scene {
     }
   }
 
+  startBossPhaseTransition() {
+    if (!this.bossSprite) {
+      return;
+    }
+
+    this.bossInPhaseTransition = true;
+    this.bossPhase = 2;
+    this.bossBullets.clear(true, true);
+    this.playerBullets.clear(true, true);
+    this.canShootAt = this.time.now + 1200;
+    this.playerShootUntil = 0;
+    this.player.setVelocity(0, 0);
+    this.playSfx("bossPhaseChange", { volume: 0.8 });
+    this.messageText.setText("Transicion de fase\nEl boss esta cambiando...");
+
+    const flash = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0xffffff, 0);
+    const blackout = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x081020, 0);
+    const energyRing = this.add.circle(this.bossSprite.x, this.bossSprite.y, 24, 0xff6677, 0.18).setScale(0.2);
+    energyRing.setStrokeStyle(8, 0xffffff, 0.9);
+
+    const burstParticles = [];
+    for (let i = 0; i < 14; i += 1) {
+      const particle = this.add.circle(
+        this.bossSprite.x,
+        this.bossSprite.y,
+        Phaser.Math.Between(4, 8),
+        i % 2 === 0 ? 0xff5f5f : 0x7cb7ff,
+        0.95,
+      );
+      burstParticles.push(particle);
+
+      this.tweens.add({
+        targets: particle,
+        x: this.bossSprite.x + Phaser.Math.Between(-140, 140),
+        y: this.bossSprite.y + Phaser.Math.Between(-170, 170),
+        alpha: 0,
+        scale: 0.25,
+        duration: Phaser.Math.Between(380, 620),
+        ease: "Cubic.easeOut",
+        onComplete: () => particle.destroy(),
+      });
+    }
+
+    this.tweens.add({
+      targets: blackout,
+      alpha: { from: 0, to: 0.45 },
+      yoyo: true,
+      duration: 420,
+      ease: "Sine.easeInOut",
+    });
+
+    this.tweens.add({
+      targets: energyRing,
+      scale: { from: 0.2, to: 4.6 },
+      alpha: { from: 0.7, to: 0 },
+      duration: 720,
+      ease: "Cubic.easeOut",
+      onComplete: () => energyRing.destroy(),
+    });
+
+    this.tweens.add({
+      targets: flash,
+      alpha: { from: 0, to: 0.75 },
+      yoyo: true,
+      repeat: 4,
+      duration: 90,
+      onUpdate: () => {
+        if (this.bossSprite && this.bossSprite.active) {
+          this.bossSprite.setTint(Phaser.Math.Between(0, 1) === 0 ? 0xffffff : 0xff6b6b);
+        }
+      },
+      onComplete: () => {
+        flash.destroy();
+        blackout.destroy();
+        if (this.bossSprite && this.bossSprite.active) {
+          this.bossSprite.clearTint();
+          this.bossSprite.setTexture(this.getBossTextureKey());
+          this.applyBossVisuals(this.bossSprite.texture.key);
+        }
+        this.cameras.main.shake(420, 0.018);
+        this.cameras.main.flash(250, 255, 120, 120, false);
+      },
+    });
+
+    this.time.delayedCall(900, () => {
+      this.messageText.setText("Fase 2\nNuevo sprite y patron mas agresivo.");
+      this.bossTeleportAt = this.time.now + BOSS_TELEPORT_INTERVAL_PHASE_2;
+      this.bossInPhaseTransition = false;
+      this.playMusicTrack("bossPhase2");
+      this.launchBossSphere();
+    });
+  }
+
   hitPlayerByBossBullet(player, bullet) {
     this.destroyBossBullet(bullet);
     this.hitPlayer(player, { x: bullet.x });
@@ -1107,16 +1382,161 @@ class PlatformerScene extends Phaser.Scene {
 
   defeatBoss() {
     this.bossDefeated = true;
-    this.messageText.setText("Boss destruido.\nComienza el ending.");
+    this.playSfx("bossDeath", { volume: 0.95 });
+    this.messageText.setText("Boss destruido.\nSobrecarga total...");
     this.bossBullets.clear(true, true);
-    if (this.bossSprite) {
-      this.bossSprite.disableBody(true, true);
+    if (!this.bossSprite) {
+      this.time.delayedCall(7000, () => this.startEnding());
+      return;
     }
-    this.time.delayedCall(1500, () => this.startEnding());
+
+    const doomOverlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0xfff3d6, 0);
+    const shockwave = this.add.circle(this.bossSprite.x, this.bossSprite.y, 30, 0xffffff, 0.12).setScale(0.3);
+    shockwave.setStrokeStyle(10, 0xffd966, 0.95);
+
+    this.tweens.add({
+      targets: doomOverlay,
+      alpha: { from: 0, to: 0.5 },
+      yoyo: true,
+      repeat: 8,
+      duration: 160,
+      ease: "Sine.easeInOut",
+    });
+
+    this.tweens.add({
+      targets: shockwave,
+      scale: { from: 0.3, to: 7.5 },
+      alpha: { from: 0.95, to: 0 },
+      duration: 1800,
+      ease: "Cubic.easeOut",
+      onComplete: () => shockwave.destroy(),
+    });
+
+    this.tweens.add({
+      targets: this.bossSprite,
+      angle: 18,
+      scaleX: this.bossSprite.scaleX * 1.08,
+      scaleY: this.bossSprite.scaleY * 1.08,
+      yoyo: true,
+      repeat: 10,
+      duration: 120,
+      ease: "Sine.easeInOut",
+    });
+
+    for (let wave = 0; wave < 7; wave += 1) {
+      this.time.delayedCall(wave * 260, () => {
+        if (!this.bossSprite || !this.bossSprite.active) {
+          return;
+        }
+
+        this.cameras.main.shake(220 + wave * 70, 0.012 + wave * 0.003);
+
+        for (let i = 0; i < 10; i += 1) {
+          const particle = this.add.circle(
+            this.bossSprite.x + Phaser.Math.Between(-60, 60),
+            this.bossSprite.y + Phaser.Math.Between(-90, 90),
+            Phaser.Math.Between(6, 14),
+            i % 3 === 0 ? 0xffffff : i % 2 === 0 ? 0xffc14d : 0xff5a5a,
+            0.92,
+          );
+
+          this.tweens.add({
+            targets: particle,
+            x: particle.x + Phaser.Math.Between(-180, 180),
+            y: particle.y + Phaser.Math.Between(-180, 180),
+            alpha: 0,
+            scale: { from: 1, to: 0.18 },
+            duration: Phaser.Math.Between(650, 1100),
+            ease: "Cubic.easeOut",
+            onComplete: () => particle.destroy(),
+          });
+        }
+      });
+    }
+
+    this.time.delayedCall(2800, () => {
+      if (this.bossSprite && this.bossSprite.active) {
+        this.bossSprite.setTint(0xffffff);
+      }
+      this.cameras.main.flash(420, 255, 240, 180, false);
+    });
+
+    this.time.delayedCall(4300, () => {
+      if (this.bossSprite && this.bossSprite.active) {
+        this.tweens.add({
+          targets: this.bossSprite,
+          alpha: 0,
+          scaleX: this.bossSprite.scaleX * 1.45,
+          scaleY: this.bossSprite.scaleY * 0.2,
+          angle: 40,
+          duration: 1900,
+          ease: "Cubic.easeIn",
+          onComplete: () => this.bossSprite.disableBody(true, true),
+        });
+      }
+    });
+
+    this.time.delayedCall(7000, () => {
+      doomOverlay.destroy();
+      this.messageText.setText("Amenaza neutralizada.\nComienza el ending.");
+      this.startEnding();
+    });
   }
 
   killPlayer(message) {
+    if (this.playerDeathInProgress) {
+      return;
+    }
+
+    this.playerDeathInProgress = true;
+    this.playerHealth = 0;
+    this.updateHud();
+
+    const deathX = this.player.x;
+    const deathY = this.player.y;
     this.player.disableBody(true, true);
+    this.playerBullets.clear(true, true);
+    this.bossBullets.clear(true, true);
+    this.canShootAt = Number.MAX_SAFE_INTEGER;
+    this.playerShootUntil = 0;
+
+    if (this.stage === "boss" && this.bossSprite && this.bossSprite.active) {
+      const bossDeathScale = (GAME_HEIGHT * 0.8) / this.bossSprite.height;
+      this.bossSprite.setPosition(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+      this.bossSprite.setVelocity?.(0, 0);
+      this.bossSprite.clearTint();
+      this.bossSprite.setAlpha(1);
+      this.bossSprite.setDepth(20);
+      this.bossSprite.setScale(bossDeathScale);
+      this.bossSprite.body.setAllowGravity(false);
+      this.bossSprite.body.moves = false;
+    }
+
+    for (let i = 0; i < 8; i += 1) {
+      const angle = (Math.PI * 2 * i) / 8;
+      const orb = this.add.circle(deathX, deathY, Phaser.Math.Between(8, 13), 0xffffff, 0.5);
+
+      this.tweens.add({
+        targets: orb,
+        x: deathX + Math.cos(angle) * Phaser.Math.Between(70, 140),
+        y: deathY + Math.sin(angle) * Phaser.Math.Between(70, 140),
+        alpha: 0,
+        scale: { from: 1, to: 0.22 },
+        duration: 1500,
+        ease: "Sine.easeOut",
+        onComplete: () => orb.destroy(),
+      });
+    }
+
+    this.tweens.add({
+      targets: this.physics.world,
+      timeScale: 0.03,
+      duration: 1800,
+      ease: "Sine.easeOut",
+    });
+
+    this.cameras.main.shake(420, 0.012);
+    this.cameras.main.flash(240, 255, 255, 255, false);
     this.messageText.setText(message);
     this.stageText.setText("DERROTA");
   }
@@ -1150,7 +1570,13 @@ class PlatformerScene extends Phaser.Scene {
 
     if (this.debugText) {
       const bossSource =
-        this.hasExternalBossSprite && this.textures.exists(BOSS_TEXTURE_KEY) ? "USANDO PNG" : "USANDO FALLBACK";
+        this.bossPhase >= 2
+          ? this.hasExternalBossPhase2Sprite && this.textures.exists(BOSS_PHASE_2_TEXTURE_KEY)
+            ? "FASE2 PNG"
+            : "FASE2 FALLBACK"
+          : this.hasExternalBossSprite && this.textures.exists(BOSS_TEXTURE_KEY)
+            ? "FASE1 PNG"
+            : "FASE1 FALLBACK";
       this.debugText.setText(`DEBUG BOSS: ${bossSource}`);
     }
 
