@@ -244,11 +244,11 @@ Tomas Nuncaacaba
 Pilar Todavia
 Rene Unpocomas
 
+Ending Inspiration
+Quest for the Crown
+
 Ending theme
 Peter Cetera
-
-Ending Inspiratio
-Quest for the Crown
 
 Participacion Especial
 Doctor Byte
