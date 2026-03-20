@@ -17,6 +17,7 @@ const BOSS_PHASE_2_TEXTURE_KEY = "boss-phase-2";
 const BOSS_FALLBACK_TEXTURE_KEY = "boss-phase-fallback";
 const BOSS_SCALE = 0.48;
 const MUSIC_TRACKS = {
+  title: { key: "music-title", path: "assets/music/title.mp3" },
   level1: { key: "music-level1", path: "assets/music/level1.mp3" },
   bossPhase1: { key: "music-boss-phase1", path: "assets/music/boss_phase1.mp3" },
   bossPhase2: { key: "music-boss-phase2", path: "assets/music/boss_phase2.mp3" },
@@ -25,6 +26,7 @@ const MUSIC_TRACKS = {
 const SFX_TRACKS = {
   bossPhaseChange: { key: "sfx-boss-phase-change", path: "assets/sfx/boss_phase_change.mp3" },
   bossDeath: { key: "sfx-boss-death", path: "assets/sfx/boss_death.mp3" },
+  bossLaugh: { key: "sfx-boss-laugh", path: "assets/sfx/laugh.mp3" },
 };
 
 const DEBUG_OPTIONS = {
@@ -33,7 +35,7 @@ const DEBUG_OPTIONS = {
   autoFire: true,
   autoFireInterval: 120,
   portalAlwaysActive: true,
-  startAtBossFight: false,
+  startAtBossFight: true,
 };
 
 const PLAYER_TEXTURE_KEYS = {
@@ -699,6 +701,7 @@ class PlatformerScene extends Phaser.Scene {
     this.currentMusicKey = null;
     this.bgSky.setFillStyle(0xeaf7ff, 1);
     this.bgHorizon.setFillStyle(0xcfeaff, 1);
+    this.playMusicTrack("title");
     this.player.disableBody(true, true);
     this.statusText.setText("");
     this.stageText.setText("");
@@ -717,7 +720,7 @@ class PlatformerScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0.5);
     const prompt = this.add
-      .text(GAME_WIDTH / 2, 265, "Presione alguna tecla para comenzar", {
+      .text(GAME_WIDTH / 2, 265, "Presione alguna tecla para activar audio", {
         fontFamily: "Trebuchet MS, sans-serif",
         fontSize: "28px",
         color: "#163250",
@@ -738,20 +741,30 @@ class PlatformerScene extends Phaser.Scene {
     this.titleContainer.add([veil, title, prompt]);
     this.titleContainer.setVisible(true);
 
-    this.input.keyboard.once("keydown", () => {
+    const startGameFromTitle = () => {
       if (this.stage !== "title") {
         return;
       }
 
       this.titleContainer.setVisible(false);
-      this.debugPanel.setVisible(true);
-      this.debugText.setVisible(true);
+      this.debugPanel.setVisible(DEBUG_OPTIONS.enabled);
+      this.debugText.setVisible(DEBUG_OPTIONS.enabled);
 
       if (DEBUG_OPTIONS.enabled && DEBUG_OPTIONS.startAtBossFight) {
         this.startBossLevel();
       } else {
         this.startLevelOne();
       }
+    };
+
+    this.input.keyboard.once("keydown", () => {
+      if (this.stage !== "title") {
+        return;
+      }
+
+      this.playMusicTrack("title");
+      prompt.setText("Presione alguna tecla para comenzar");
+      this.input.keyboard.once("keydown", startGameFromTitle);
     });
   }
 
@@ -1501,6 +1514,7 @@ class PlatformerScene extends Phaser.Scene {
     this.playerShootUntil = 0;
 
     if (this.stage === "boss" && this.bossSprite && this.bossSprite.active) {
+      this.playSfx("bossLaugh", { volume: 0.9 });
       const bossDeathScale = (GAME_HEIGHT * 0.8) / this.bossSprite.height;
       this.bossSprite.setPosition(GAME_WIDTH / 2, GAME_HEIGHT / 2);
       this.bossSprite.setVelocity?.(0, 0);
@@ -1568,7 +1582,7 @@ class PlatformerScene extends Phaser.Scene {
       this.stageText.setText("ENDING");
     }
 
-    if (this.debugText) {
+    if (this.debugText && DEBUG_OPTIONS.enabled) {
       const bossSource =
         this.bossPhase >= 2
           ? this.hasExternalBossPhase2Sprite && this.textures.exists(BOSS_PHASE_2_TEXTURE_KEY)
@@ -1581,7 +1595,11 @@ class PlatformerScene extends Phaser.Scene {
     }
 
     if (this.debugPanel) {
-      this.debugPanel.setVisible(true);
+      this.debugPanel.setVisible(DEBUG_OPTIONS.enabled);
+    }
+
+    if (this.debugText) {
+      this.debugText.setVisible(DEBUG_OPTIONS.enabled);
     }
   }
 }
